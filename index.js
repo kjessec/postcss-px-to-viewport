@@ -23,13 +23,13 @@ var defaults = {
 };
 
 module.exports = postcss.plugin('postcss-px-to-viewport', function (options) {
-  
+
   var opts = objectAssign({}, defaults, options);
 
   var pxRegex = getUnitRegexp(opts.unitToConvert);
   var satisfyPropList = createPropListMatcher(opts.propList);
   var landscapeRules = [];
-  
+
   return function (css) {
     css.walkRules(function (rule) {
       // Add exclude option to ignore some files like 'node_modules'
@@ -46,7 +46,7 @@ module.exports = postcss.plugin('postcss-px-to-viewport', function (options) {
           throw new Error('options.exclude should be RegExp or Array.');
         }
       }
-      
+
       if (blacklistedSelector(opts.selectorBlackList, rule.selector)) return;
 
       if (opts.landscape && !rule.parent.params) {
@@ -55,27 +55,34 @@ module.exports = postcss.plugin('postcss-px-to-viewport', function (options) {
         rule.walkDecls(function(decl) {
           if (decl.value.indexOf(opts.unitToConvert) === -1) return;
           if (!satisfyPropList(decl.prop)) return;
-          
+
           landscapeRule.append(decl.clone({
             value: decl.value.replace(pxRegex, createPxReplace(opts, opts.landscapeUnit, opts.landscapeWidth))
           }));
         });
-        
+
         if (landscapeRule.nodes.length > 0) {
-          landscapeRules.push(landscapeRule); 
+          landscapeRules.push(landscapeRule);
         }
       }
 
-      if (!validateParams(rule.parent.params, opts.mediaQuery)) return;
-      
+      if (!validateParams(rule.parent.params, opts.mediaQuery)) {
+        return;
+      }
+
       rule.walkDecls(function(decl, i) {
+
         if (decl.value.indexOf(opts.unitToConvert) === -1) return;
         if (!satisfyPropList(decl.prop)) return;
 
         var unit;
         var size;
         var params = rule.parent.params;
-        
+
+        if (!validateParams(rule.parent.params, opts.mediaQuery)) {
+          return;
+        }
+
         if (opts.landscape && params && params.indexOf('landscape') !== -1) {
           unit = opts.landscapeUnit;
           size = opts.landscapeWidth;
@@ -83,11 +90,17 @@ module.exports = postcss.plugin('postcss-px-to-viewport', function (options) {
           unit = getUnit(decl.prop, opts);
           size = opts.viewportWidth;
         }
-        
-        var value = decl.value.replace(pxRegex, createPxReplace(opts, unit, size));
-        
+
+        var value;
+
+        if (recursiveCheck(decl.parent, options.mediaQuery)) {
+          value = decl.value.replace(pxRegex, createPxReplace(opts, unit, 375));
+        } else {
+          value = decl.value.replace(pxRegex, createPxReplace(opts, unit, size));
+        }
+
         if (declarationExists(decl.parent, decl.prop, value)) return;
-        
+
         if (opts.replace) {
           decl.value = value;
         } else {
@@ -95,10 +108,10 @@ module.exports = postcss.plugin('postcss-px-to-viewport', function (options) {
         }
       });
     });
-    
+
     if (landscapeRules.length > 0) {
       var landscapeRoot = new postcss.atRule({ params: '(orientation: landscape)', name: 'media' });
-      
+
       landscapeRules.forEach(function(rule) {
         landscapeRoot.append(rule);
       });
@@ -123,7 +136,7 @@ function createPxReplace(opts, viewportUnit, viewportSize) {
 
 function toFixed(number, precision) {
   var multiplier = Math.pow(10, precision + 1),
-    wholeNumber = Math.floor(number * multiplier);
+      wholeNumber = Math.floor(number * multiplier);
   return Math.round(wholeNumber / 10) * 10 / multiplier;
 }
 
@@ -144,10 +157,16 @@ function isExclude(reg, file) {
 
 function declarationExists(decls, prop, value) {
   return decls.some(function (decl) {
-      return (decl.prop === prop && decl.value === value);
+    return (decl.prop === prop && decl.value === value);
   });
 }
 
-function validateParams(params, mediaQuery) {
+function validateParams(params, mediaQuery, node) {
   return !params || (params && mediaQuery);
+}
+
+function recursiveCheck(p, mediaQuery) {
+  return !validateParams(p.params, mediaQuery, p) || (
+      p.parent ? recursiveCheck(p.parent, mediaQuery) : false
+  )
 }
